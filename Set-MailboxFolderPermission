@@ -1,0 +1,9 @@
+#access right can be defined as per MS documentation
+# -user field can use groups
+
+Set-MailboxFolderPermission `
+  -Identity "user1@business.co.uk:\Calendar" `
+  -User "user2@business.co.uk" `
+  -AccessRights noneditingauthor
+
+
