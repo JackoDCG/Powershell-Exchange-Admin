@@ -1,0 +1,4 @@
+Add-MailboxFolderPermission `
+  -Identity "user@business.co.uk:\Inbox" `
+  -User "user@business.co.uk" `
+  -AccessRights Editor
