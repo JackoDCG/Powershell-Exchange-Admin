@@ -1,0 +1,3 @@
+Remove-MailboxFolderPermission `
+  -Identity "user1@business.co.uk:\inbox" `
+  -User "user2@business.co.uk" 
