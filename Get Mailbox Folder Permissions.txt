@@ -1,8 +1,0 @@
-$users = "user1@business.co.uk",
-"user2@business.co.uk",
-
-$results = foreach ($user in $users) {
-    Get-MailboxFolderPermission -Identity "${user}:\inbox"
-}
-
-$results | Export-Csv -Path "C:\t\CalendarPermissions.csv" -NoTypeInformation
