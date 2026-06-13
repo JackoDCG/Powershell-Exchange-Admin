@@ -1,0 +1,82 @@
+# Mailbox Folder Permission Checker
+# Outputs results to C:\t\mailboxresults.csv
+
+# Ensure output directory exists
+if (-not (Test-Path "C:\t")) {
+    New-Item -ItemType Directory -Path "C:\t" | Out-Null
+}
+
+# Collect email addresses from user
+Write-Host "Enter email addresses to check, one per line."
+Write-Host "When finished, enter a blank line and press Enter."
+Write-Host ""
+
+$emailAddresses = @()
+while ($true) {
+    $entry = Read-Host "Email address"
+    if ([string]::IsNullOrWhiteSpace($entry)) { break }
+    $emailAddresses += $entry.Trim()
+}
+
+if ($emailAddresses.Count -eq 0) {
+    Write-Host "No email addresses entered. Exiting."
+    exit 0
+}
+
+Write-Host ""
+Write-Host "Checking permissions for $($emailAddresses.Count) mailbox(es)..."
+
+$results = @()
+$folders = @("", "Inbox", "Drafts", "Sent Items", "Deleted Items")
+$folderLabels = @("Top Level", "Inbox", "Drafts", "Sent Items", "Deleted Items")
+
+foreach ($email in $emailAddresses) {
+    Write-Host ""
+    Write-Host "Processing: $email"
+
+    for ($i = 0; $i -lt $folders.Count; $i++) {
+        $folderLabel = $folderLabels[$i]
+
+        if ($folders[$i] -eq "") {
+            $identity = $email
+        } else {
+            $identity = "{0}:\{1}" -f $email, $folders[$i]
+        }
+
+        Write-Host "  Checking $folderLabel ($identity)..."
+
+        try {
+            $permissions = Get-MailboxFolderPermission -Identity $identity -ErrorAction Stop
+
+            foreach ($perm in $permissions) {
+                $results += [PSCustomObject]@{
+                    User           = $email
+                    Folder         = $folderLabel
+                    Identity       = $identity
+                    UserWithAccess = $perm.User
+                    AccessRights   = ($perm.AccessRights -join ", ")
+                    SharingFlags   = $perm.SharingPermissionFlags
+                }
+            }
+
+            Write-Host "  Done. $($permissions.Count) permission(s) found."
+        } catch {
+            Write-Host "  ERROR checking ${identity}: $_"
+            $results += [PSCustomObject]@{
+                User           = $email
+                Folder         = $folderLabel
+                Identity       = $identity
+                UserWithAccess = "ERROR"
+                AccessRights   = $_.Exception.Message
+                SharingFlags   = ""
+            }
+        }
+    }
+}
+
+# Export to CSV
+Write-Host ""
+Write-Host "Exporting results to C:\t\mailboxresults.csv..."
+$results | Export-Csv -Path "C:\t\mailboxresults.csv" -NoTypeInformation
+
+Write-Host "Done. $($results.Count) total permission entries written."
