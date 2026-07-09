@@ -1,0 +1,31 @@
+$User = "user@business.co.uk"
+
+Get-DistributionGroupMember "Name for group" -ResultSize Unlimited |
+Where-Object {
+    $_.PrimarySmtpAddress -ne $User
+} |
+ForEach-Object {
+
+    $Mailbox = $_.PrimarySmtpAddress.ToString()
+
+    try {
+
+        Get-MailboxFolderPermission `
+            -Identity "$Mailbox`:\Calendar" `
+            -User $User `
+            -ErrorAction Stop | Out-Null
+
+        Write-Host "$Mailbox - already assigned" -ForegroundColor Yellow
+
+    }
+    catch {
+
+        Add-MailboxFolderPermission `
+            -Identity "$Mailbox`:\Calendar" `
+            -User $User `
+            -AccessRights Outlook defined access right
+
+        Write-Host "$Mailbox - permission added" -ForegroundColor Green
+
+    }
+}
