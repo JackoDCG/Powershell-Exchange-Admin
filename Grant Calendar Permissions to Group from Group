@@ -1,0 +1,143 @@
+Import-Module ExchangeOnlineManagement
+Connect-ExchangeOnline
+
+# ==========================================
+# CONFIG
+# ==========================================
+
+# ENTER THE EMAIL ADDRESS FOR THE GROUP TO GET PERMISSIONS APPLIED TO HERE
+$GroupEmail = "group@business.co.uk"
+
+# ==========================================
+# Collect exclusions
+# ==========================================
+
+$Exclusions = @()
+
+Write-Host ""
+Write-Host "Enter email addresses to exclude."
+Write-Host "Press Enter on a blank line when finished."
+Write-Host ""
+
+while ($true) {
+
+    $Email = (Read-Host "Exclude (blank to finish)").Trim()
+
+    if ($Email -eq "") {
+        break
+    }
+
+    $Exclusions += $Email.ToLower()
+}
+
+# ==========================================
+# Build report
+# ==========================================
+
+$Results = @()
+
+# ADD THE GROUP TO PULL THE MEMBERS FROM HERE
+
+Get-DistributionGroupMember "Members Of This Group" -ResultSize Unlimited |
+ForEach-Object {
+
+    $Mailbox = $_.PrimarySmtpAddress.ToString()
+
+    if ($Mailbox.ToLower() -in $Exclusions) {
+
+        $Results += [PSCustomObject]@{
+            Mailbox = $Mailbox
+            Status  = "Excluded"
+        }
+
+        return
+    }
+
+    $Existing = Get-MailboxFolderPermission `
+        -Identity "$Mailbox`:\Calendar" `
+        -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.User.ToString() -like "*Members of This Group*"
+        }
+
+    if ($Existing) {
+
+        $Results += [PSCustomObject]@{
+            Mailbox = $Mailbox
+            Status  = "Already Assigned"
+        }
+    }
+    else {
+
+        $Results += [PSCustomObject]@{
+            Mailbox = $Mailbox
+            Status  = "Will Add"
+        }
+    }
+}
+
+# ==========================================
+# Display report
+# ==========================================
+
+Write-Host ""
+Write-Host "========== REVIEW ==========" -ForegroundColor Cyan
+
+$Results |
+Sort-Object Status,Mailbox |
+Format-Table -AutoSize
+
+Write-Host ""
+Write-Host "========== SUMMARY ==========" -ForegroundColor Cyan
+
+$Results |
+Group-Object Status |
+Select-Object Name,Count |
+Format-Table -AutoSize
+
+$ToAdd = $Results |
+Where-Object {$_.Status -eq "Will Add"}
+
+Write-Host ""
+Write-Host "$($ToAdd.Count) mailbox(es) will be updated." -ForegroundColor Green
+
+# ==========================================
+# Confirmation
+# ==========================================
+
+$Confirm = Read-Host "Proceed with changes? (Y/N)"
+
+if ($Confirm.ToUpper() -ne "Y") {
+
+    Write-Host "Cancelled." -ForegroundColor Yellow
+    exit
+}
+
+# ==========================================
+# Apply changes
+# ==========================================
+
+foreach ($Entry in $ToAdd) {
+
+    try {
+
+        Add-MailboxFolderPermission `
+            -Identity "$($Entry.Mailbox)`:\Calendar" `
+            -User $GroupEmail `
+            -AccessRights NonEditingAuthor `
+            -ErrorAction Stop
+
+        Write-Host "[ADDED] $($Entry.Mailbox)" -ForegroundColor Green
+
+    }
+    catch {
+
+        Write-Host "[FAILED] $($Entry.Mailbox)" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+    }
+}
+
+Write-Host ""
+Write-Host "Script complete. Review any messages above." -ForegroundColor Green
+
+Read-Host "Press Enter to exit"
