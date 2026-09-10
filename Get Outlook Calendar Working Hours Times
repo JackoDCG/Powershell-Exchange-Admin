@@ -1,0 +1,9 @@
+Get-MailboxCalendarConfiguration -Identity user@domain.co.uk |
+
+>> Select-Object WorkingHoursStartTime,
+
+>>               WorkingHoursEndTime,
+
+>>               WorkDays,
+
+>>               WorkingHoursTimeZone
