@@ -1,0 +1,11 @@
+Set-MailboxCalendarConfiguration `
+
+-Identity user@domain.co.uk `
+
+-WorkingHoursStartTime 09:30:00 `
+
+-WorkingHoursEndTime 17:30:00 `
+
+-WorkDays Monday,Tuesday,Wednesday,Thursday,Friday `
+
+-WorkingHoursTimeZone "GMT Standard Time"
