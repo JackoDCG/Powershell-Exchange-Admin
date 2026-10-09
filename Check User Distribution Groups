@@ -1,0 +1,6 @@
+$user = "user@domain.co.uk"
+
+Get-DistributionGroup | Where-Object {
+    (Get-DistributionGroupMember $_.Identity -ResultSize Unlimited -ErrorAction SilentlyContinue |
+        Where-Object PrimarySmtpAddress -eq $user)
+} | Select-Object DisplayName,PrimarySmtpAddress
