@@ -1,0 +1,11 @@
+$user = "user@domain.co.uk"
+
+Get-DistributionGroup | Where-Object {
+    (Get-DistributionGroupMember $_.Identity -ResultSize Unlimited -ErrorAction SilentlyContinue |
+        Where-Object PrimarySmtpAddress -eq $user)
+} | ForEach-Object {
+    Write-Host "Removing from $($_.DisplayName)" -ForegroundColor Yellow
+    Remove-DistributionGroupMember -Identity $_.Identity `
+        -Member $user `
+        -Confirm:$false
+}
