@@ -1,0 +1,206 @@
+# ============================================================
+# Report Calendar permissions for mailboxes belonging to
+# members of an Exchange group
+#
+# READ ONLY - makes no changes
+#
+# Requires:
+#   Connect-ExchangeOnline
+# ============================================================
+
+$Group = Read-Host "Enter the group name or email address"
+
+Write-Host ""
+Write-Host "Getting members of '$Group'..." -ForegroundColor Cyan
+
+# ------------------------------------------------------------
+# Get group members
+# ------------------------------------------------------------
+
+try {
+
+    $Members = Get-DistributionGroupMember `
+        -Identity $Group `
+        -ResultSize Unlimited `
+        -ErrorAction Stop
+
+}
+catch {
+
+    Write-Host ""
+    Write-Host "ERROR: Could not retrieve members of '$Group'." -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    return
+}
+
+Write-Host "Found $($Members.Count) members." -ForegroundColor Green
+Write-Host ""
+
+
+# ------------------------------------------------------------
+# Results array
+# ------------------------------------------------------------
+
+$Results = @()
+
+
+# ------------------------------------------------------------
+# Process each member
+# ------------------------------------------------------------
+
+foreach ($Member in $Members) {
+
+    $MailboxAddress = $Member.PrimarySmtpAddress.ToString()
+
+    Write-Host "Checking: $($Member.DisplayName) <$MailboxAddress>" -ForegroundColor Cyan
+
+
+    # --------------------------------------------------------
+    # Confirm the member actually has a mailbox
+    # --------------------------------------------------------
+
+    try {
+
+        $Mailbox = Get-Mailbox `
+            -Identity $MailboxAddress `
+            -ErrorAction Stop
+
+    }
+    catch {
+
+        Write-Host "  Skipped - no mailbox found." -ForegroundColor Yellow
+        continue
+
+    }
+
+
+    # --------------------------------------------------------
+    # Find the primary Calendar dynamically
+    #
+    # This avoids assuming that the folder is literally called
+    # "Calendar".
+    # --------------------------------------------------------
+
+    try {
+
+        $Calendar = Get-EXOMailboxFolderStatistics `
+            -Identity $MailboxAddress `
+            -FolderScope Calendar `
+            -ErrorAction Stop |
+            Where-Object { $_.FolderType -eq "Calendar" } |
+            Select-Object -First 1
+
+    }
+    catch {
+
+        Write-Host "  ERROR retrieving Calendar folder." -ForegroundColor Red
+        continue
+
+    }
+
+
+    if (-not $Calendar) {
+
+        Write-Host "  Calendar folder not found." -ForegroundColor Yellow
+        continue
+
+    }
+
+
+    # Convert:
+    #
+    #   /Calendar
+    #
+    # to:
+    #
+    #   \Calendar
+
+    $CalendarPath = $Calendar.FolderPath.Replace("/", "\")
+
+    $CalendarIdentity = "${MailboxAddress}:$CalendarPath"
+
+
+    # --------------------------------------------------------
+    # Get ALL Calendar permissions
+    # --------------------------------------------------------
+
+    try {
+
+        $Permissions = Get-MailboxFolderPermission `
+            -Identity $CalendarIdentity `
+            -ErrorAction Stop
+
+    }
+    catch {
+
+        Write-Host "  ERROR retrieving Calendar permissions." -ForegroundColor Red
+
+        $Results += [PSCustomObject]@{
+            MailboxName            = $Mailbox.DisplayName
+            Mailbox                = $MailboxAddress
+            Calendar               = $Calendar.Name
+            PermissionUser         = "ERROR"
+            AccessRights           = $_.Exception.Message
+            SharingPermissionFlags = ""
+        }
+
+        continue
+
+    }
+
+
+    # --------------------------------------------------------
+    # Add every permission to report
+    # --------------------------------------------------------
+
+    foreach ($Permission in $Permissions) {
+
+        $Results += [PSCustomObject]@{
+
+            MailboxName            = $Mailbox.DisplayName
+            Mailbox                = $MailboxAddress
+
+            Calendar               = $Calendar.Name
+
+            PermissionUser         = $Permission.User.ToString()
+
+            AccessRights           = (
+                $Permission.AccessRights -join ", "
+            )
+
+            SharingPermissionFlags = (
+                $Permission.SharingPermissionFlags -join ", "
+            )
+        }
+
+    }
+
+}
+
+
+# ============================================================
+# Results
+# ============================================================
+
+Write-Host ""
+Write-Host "Finished checking calendars." -ForegroundColor Green
+Write-Host "Found $($Results.Count) Calendar permission entries."
+Write-Host ""
+
+
+# Console copy
+$Results |
+    Sort-Object MailboxName, PermissionUser |
+    Format-Table `
+        MailboxName,
+        Mailbox,
+        PermissionUser,
+        AccessRights,
+        SharingPermissionFlags `
+        -AutoSize
+
+
+# Separate sortable/filterable window
+$Results |
+    Sort-Object MailboxName, PermissionUser |
+    Out-GridView -Title "Calendar Permissions - $Group"
