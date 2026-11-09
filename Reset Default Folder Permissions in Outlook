@@ -1,0 +1,559 @@
+# ============================================================
+# Reset Default and Anonymous mailbox folder permissions
+#
+# NORMAL FOLDERS:
+#   Default   = None
+#   Anonymous = None
+#
+# CALENDAR:
+#   Default   = AvailabilityOnly
+#   Anonymous = None
+#
+# Targets:
+#   Top of Information Store
+#   Inbox
+#   Sent Items
+#   Deleted Items
+#   Drafts
+#   Contacts
+#   Tasks
+#   Junk Email
+#   Calendar
+#
+# Named user/group permissions are NOT modified.
+#
+# Requires Exchange Online PowerShell.
+# Connect first using:
+#   Connect-ExchangeOnline
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Ask for mailbox
+# ------------------------------------------------------------
+
+$mailbox = Read-Host "Enter the mailbox email address to modify"
+
+
+# ------------------------------------------------------------
+# Verify mailbox exists
+# ------------------------------------------------------------
+
+try {
+
+    $MailboxObject = Get-Mailbox `
+        -Identity $mailbox `
+        -ErrorAction Stop
+
+}
+catch {
+
+    Write-Host ""
+    Write-Host "ERROR: Mailbox '$mailbox' could not be found." -ForegroundColor Red
+    Write-Host ""
+    return
+}
+
+
+$PrimarySmtpAddress = $MailboxObject.PrimarySmtpAddress.ToString()
+
+
+Write-Host ""
+Write-Host "Mailbox found" -ForegroundColor Green
+Write-Host "----------------------------------------"
+Write-Host "Display Name : $($MailboxObject.DisplayName)"
+Write-Host "Email Address: $PrimarySmtpAddress"
+Write-Host "----------------------------------------"
+Write-Host ""
+
+
+# ------------------------------------------------------------
+# Retrieve actual mailbox folder information
+# ------------------------------------------------------------
+
+try {
+
+    $MailboxFolders = Get-EXOMailboxFolderStatistics `
+        -Identity $PrimarySmtpAddress `
+        -ErrorAction Stop
+
+}
+catch {
+
+    Write-Host "ERROR: Unable to retrieve mailbox folders." -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    return
+
+}
+
+
+# ------------------------------------------------------------
+# Array to hold proposed changes
+# ------------------------------------------------------------
+
+$Changes = @()
+
+
+# ============================================================
+# TOP OF INFORMATION STORE / ROOT
+#
+# Confirmed working identity:
+#
+#   mailbox@domain.com:\
+#
+# Default   -> None
+# Anonymous -> None
+# ============================================================
+
+$RootIdentity = "${PrimarySmtpAddress}:\"
+
+
+foreach ($User in @("Default", "Anonymous")) {
+
+    try {
+
+        $Permission = Get-MailboxFolderPermission `
+            -Identity $RootIdentity `
+            -User $User `
+            -ErrorAction Stop
+
+
+        $CurrentAccess = ($Permission.AccessRights -join ",")
+
+
+        $Changes += [PSCustomObject]@{
+
+            Folder        = "Top of Information Store"
+            FolderType    = "Root"
+            User          = $User
+            CurrentAccess = $CurrentAccess
+            NewAccess     = "None"
+            Identity      = $RootIdentity
+
+        }
+
+    }
+    catch {
+
+        Write-Host `
+            "WARNING: Could not read $User permission on Top of Information Store." `
+            -ForegroundColor Yellow
+
+    }
+
+}
+
+
+# ============================================================
+# STANDARD MAILBOX FOLDERS
+#
+# Default   -> None
+# Anonymous -> None
+# ============================================================
+
+$StandardFolderTypes = @(
+    "Inbox",
+    "SentItems",
+    "DeletedItems",
+    "Drafts",
+    "Contacts",
+    "Tasks",
+    "JunkEmail"
+)
+
+
+foreach ($FolderType in $StandardFolderTypes) {
+
+
+    # Locate folder by FolderType rather than assuming its name.
+
+    $Folder = $MailboxFolders |
+        Where-Object { $_.FolderType -eq $FolderType } |
+        Select-Object -First 1
+
+
+    if (-not $Folder) {
+
+        Write-Host `
+            "WARNING: Could not find folder type '$FolderType'." `
+            -ForegroundColor Yellow
+
+        continue
+
+    }
+
+
+    # Convert:
+    #
+    # /Sent Items
+    #
+    # to:
+    #
+    # \Sent Items
+
+    $FolderPath = $Folder.FolderPath.Replace("/", "\")
+
+    $Identity = "${PrimarySmtpAddress}:$FolderPath"
+
+
+    foreach ($User in @("Default", "Anonymous")) {
+
+        try {
+
+            $Permission = Get-MailboxFolderPermission `
+                -Identity $Identity `
+                -User $User `
+                -ErrorAction Stop
+
+
+            $CurrentAccess = ($Permission.AccessRights -join ",")
+
+
+            $Changes += [PSCustomObject]@{
+
+                Folder        = $Folder.Name
+                FolderType    = $FolderType
+                User          = $User
+                CurrentAccess = $CurrentAccess
+                NewAccess     = "None"
+                Identity      = $Identity
+
+            }
+
+        }
+        catch {
+
+            Write-Host `
+                "WARNING: Could not read $User permission for '$($Folder.Name)'." `
+                -ForegroundColor Yellow
+
+        }
+
+    }
+
+}
+
+
+# ============================================================
+# CALENDAR
+#
+# IMPORTANT:
+#
+# Default   -> AvailabilityOnly
+# Anonymous -> None
+#
+# Explicit permissions such as MT_Staff_Calendar_Access
+# or individual delegates are NOT modified.
+# ============================================================
+
+$Calendar = $MailboxFolders |
+    Where-Object { $_.FolderType -eq "Calendar" } |
+    Select-Object -First 1
+
+
+if (-not $Calendar) {
+
+    Write-Host `
+        "WARNING: Could not locate the primary Calendar." `
+        -ForegroundColor Yellow
+
+}
+else {
+
+    $CalendarPath = $Calendar.FolderPath.Replace("/", "\")
+
+    $CalendarIdentity = "${PrimarySmtpAddress}:$CalendarPath"
+
+
+    # ----------------------------
+    # Calendar Default
+    # ----------------------------
+
+    try {
+
+        $Permission = Get-MailboxFolderPermission `
+            -Identity $CalendarIdentity `
+            -User Default `
+            -ErrorAction Stop
+
+
+        $CurrentAccess = ($Permission.AccessRights -join ",")
+
+
+        $Changes += [PSCustomObject]@{
+
+            Folder        = $Calendar.Name
+            FolderType    = "Calendar"
+            User          = "Default"
+            CurrentAccess = $CurrentAccess
+            NewAccess     = "AvailabilityOnly"
+            Identity      = $CalendarIdentity
+
+        }
+
+    }
+    catch {
+
+        Write-Host `
+            "WARNING: Could not read Default permission for Calendar." `
+            -ForegroundColor Yellow
+
+    }
+
+
+    # ----------------------------
+    # Calendar Anonymous
+    # ----------------------------
+
+    try {
+
+        $Permission = Get-MailboxFolderPermission `
+            -Identity $CalendarIdentity `
+            -User Anonymous `
+            -ErrorAction Stop
+
+
+        $CurrentAccess = ($Permission.AccessRights -join ",")
+
+
+        $Changes += [PSCustomObject]@{
+
+            Folder        = $Calendar.Name
+            FolderType    = "Calendar"
+            User          = "Anonymous"
+            CurrentAccess = $CurrentAccess
+            NewAccess     = "None"
+            Identity      = $CalendarIdentity
+
+        }
+
+    }
+    catch {
+
+        Write-Host `
+            "WARNING: Could not read Anonymous permission for Calendar." `
+            -ForegroundColor Yellow
+
+    }
+
+}
+
+
+# ============================================================
+# DISPLAY CURRENT AND PROPOSED PERMISSIONS
+# ============================================================
+
+Write-Host ""
+Write-Host "Current and proposed permissions" -ForegroundColor Cyan
+Write-Host "================================"
+Write-Host ""
+
+
+$Changes |
+    Select-Object Folder, User, CurrentAccess, NewAccess |
+    Format-Table -AutoSize
+
+
+# ------------------------------------------------------------
+# Work out which entries actually require modification
+# ------------------------------------------------------------
+
+$RequiredChanges = @(
+    $Changes |
+        Where-Object {
+            $_.CurrentAccess -ne $_.NewAccess
+        }
+)
+
+
+Write-Host ""
+Write-Host "IMPORTANT" -ForegroundColor Yellow
+Write-Host "---------------------------------------------"
+Write-Host "Named users will NOT be modified."
+Write-Host "Groups will NOT be modified."
+Write-Host "Existing delegates will NOT be modified."
+Write-Host ""
+Write-Host "Standard folders:"
+Write-Host "  Default   -> None"
+Write-Host "  Anonymous -> None"
+Write-Host ""
+Write-Host "Calendar:"
+Write-Host "  Default   -> AvailabilityOnly"
+Write-Host "  Anonymous -> None"
+Write-Host "---------------------------------------------"
+Write-Host ""
+
+
+# ------------------------------------------------------------
+# Stop if everything is already correct
+# ------------------------------------------------------------
+
+if ($RequiredChanges.Count -eq 0) {
+
+    Write-Host "No changes are required." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "All checked permissions already match the required settings."
+    Write-Host ""
+
+    return
+
+}
+
+
+# ------------------------------------------------------------
+# Show only entries that will actually change
+# ------------------------------------------------------------
+
+Write-Host "The following entries REQUIRE modification:" -ForegroundColor Yellow
+Write-Host ""
+
+
+$RequiredChanges |
+    Select-Object Folder, User, CurrentAccess, NewAccess |
+    Format-Table -AutoSize
+
+
+# ============================================================
+# CONFIRM
+# ============================================================
+
+Write-Host ""
+
+$Confirmation = Read-Host "Type YES to apply these changes"
+
+
+if ($Confirmation -cne "YES") {
+
+    Write-Host ""
+    Write-Host "No changes have been made." -ForegroundColor Yellow
+    Write-Host ""
+
+    return
+
+}
+
+
+# ============================================================
+# APPLY CHANGES
+# ============================================================
+
+Write-Host ""
+Write-Host "Applying changes..." -ForegroundColor Cyan
+Write-Host ""
+
+
+foreach ($Change in $Changes) {
+
+
+    # Skip ACLs which already have the correct permission.
+
+    if ($Change.CurrentAccess -eq $Change.NewAccess) {
+
+        Write-Host `
+            "$($Change.Folder) - $($Change.User) already $($Change.NewAccess). No change required." `
+            -ForegroundColor DarkGray
+
+        continue
+
+    }
+
+
+    try {
+
+        Set-MailboxFolderPermission `
+            -Identity $Change.Identity `
+            -User $Change.User `
+            -AccessRights $Change.NewAccess `
+            -ErrorAction Stop
+
+
+        Write-Host `
+            "$($Change.Folder) - $($Change.User): $($Change.CurrentAccess) -> $($Change.NewAccess)" `
+            -ForegroundColor Green
+
+    }
+    catch {
+
+        Write-Host `
+            "FAILED: $($Change.Folder) - $($Change.User)" `
+            -ForegroundColor Red
+
+        Write-Host $_.Exception.Message -ForegroundColor Red
+
+    }
+
+}
+
+
+# ============================================================
+# VERIFY RESULTS
+# ============================================================
+
+Write-Host ""
+Write-Host "Verifying permissions..." -ForegroundColor Cyan
+Write-Host ""
+
+
+$VerificationResults = @()
+
+
+foreach ($Change in $Changes) {
+
+    try {
+
+        $Permission = Get-MailboxFolderPermission `
+            -Identity $Change.Identity `
+            -User $Change.User `
+            -ErrorAction Stop
+
+
+        $FinalAccess = ($Permission.AccessRights -join ",")
+
+
+        if ($FinalAccess -eq $Change.NewAccess) {
+
+            $Status = "OK"
+
+        }
+        else {
+
+            $Status = "REVIEW"
+
+        }
+
+
+        $VerificationResults += [PSCustomObject]@{
+
+            Folder         = $Change.Folder
+            User           = $Change.User
+            AccessRights   = $FinalAccess
+            ExpectedRights = $Change.NewAccess
+            Status         = $Status
+
+        }
+
+    }
+    catch {
+
+        $VerificationResults += [PSCustomObject]@{
+
+            Folder         = $Change.Folder
+            User           = $Change.User
+            AccessRights   = "Unable to read"
+            ExpectedRights = $Change.NewAccess
+            Status         = "ERROR"
+
+        }
+
+    }
+
+}
+
+
+$VerificationResults |
+    Format-Table Folder, User, AccessRights, ExpectedRights, Status -AutoSize
+
+
+Write-Host ""
+Write-Host "Finished." -ForegroundColor Green
+Write-Host ""
